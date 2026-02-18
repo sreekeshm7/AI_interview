@@ -18,5 +18,16 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:////tmp/interview.db"
 
+    @property
+    def is_production(self) -> bool:
+        return not self.database_url.startswith("sqlite")
+
 
 settings = Settings()
+
+# Log configuration on startup
+import os
+print("[config] Environment variables:")
+print(f"  DATABASE_URL set: {'DATABASE_URL' in os.environ}")
+print(f"  OPENAI_API_KEY set: {'OPENAI_API_KEY' in os.environ}")
+print(f"  Using database: {'Supabase/Postgres' if settings.is_production else 'SQLite'}")
