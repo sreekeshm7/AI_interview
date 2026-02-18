@@ -29,14 +29,30 @@ app.add_middleware(
 @app.on_event("startup")
 def on_startup():
     try:
+        print(f"[startup] Database URL: {settings.database_url[:50]}..." if len(settings.database_url) > 50 else f"[startup] Database URL: {settings.database_url}")
         Base.metadata.create_all(bind=engine)
+        print("[startup] Database tables created successfully")
     except Exception as exc:
-        print(f"[startup-warning] Database initialization skipped: {exc}")
+        print(f"[startup-error] Database initialization failed: {exc}")
+        import traceback
+        traceback.print_exc()
 
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/health/db")
+def health_db():
+    try:
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        return {"status": "ok", "database": "connected"}
+    except Exception as exc:
+        return {"status": "error", "database": str(exc)}
 
 
 app.include_router(api_router, prefix=settings.api_prefix)
