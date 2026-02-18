@@ -15,9 +15,15 @@ router = APIRouter(prefix="/collector", tags=["collector"])
 
 @router.post("/start", response_model=CollectorStartResponse)
 def start_collector(body: CollectorStartRequest | None = None, db: Session = Depends(get_db)):
-    collector_repo = CollectorRepository(db)
-    user_id = body.user_id if body else None
-    session = collector_repo.create(user_id=user_id)
+    try:
+        collector_repo = CollectorRepository(db)
+        user_id = body.user_id if body else None
+        session = collector_repo.create(user_id=user_id)
+    except Exception as exc:
+        print(f"[collector/start] Error creating session: {exc}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to create collector session: {str(exc)}")
 
     assistant_message = FIELD_PROMPTS["role"]
 
