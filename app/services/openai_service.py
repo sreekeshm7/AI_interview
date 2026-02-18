@@ -9,6 +9,8 @@ from app.schemas.interview import InterviewSetupPayload
 
 class OpenAIService:
     def __init__(self):
+        if not settings.openai_api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured. Set it in deployment environment variables.")
         self.client = OpenAI(api_key=settings.openai_api_key)
 
     def generate_interview_questions(self, payload: InterviewSetupPayload) -> List[str]:
