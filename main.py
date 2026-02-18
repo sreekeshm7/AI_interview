@@ -11,7 +11,10 @@ app = FastAPI(title=settings.app_name)
 
 @app.on_event("startup")
 def on_startup():
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as exc:
+        print(f"[startup-warning] Database initialization skipped: {exc}")
 
 
 @app.get("/health")
