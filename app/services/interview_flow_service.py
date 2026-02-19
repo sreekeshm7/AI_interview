@@ -76,6 +76,17 @@ CLARIFY_KEYWORDS = {
     "confused",
 }
 
+CORRECTION_KEYWORDS = {
+    "i meant",
+    "i mean",
+    "correction",
+    "correct that",
+    "thats wrong",
+    "that's wrong",
+    "no no",
+    "sorry",
+}
+
 NUMBER_WORDS = {
     "one": 1,
     "two": 2,
@@ -178,6 +189,88 @@ class InterviewFlowService:
         if intent == "not_ready":
             return "No worries at all. Take your time, and tell me when you’re ready to start."
         return FIELD_PROMPTS[field_name]
+
+    @staticmethod
+    def get_previous_field(current_field: str) -> str | None:
+        idx = COLLECT_FIELDS.index(current_field)
+        if idx <= 0:
+            return None
+        previous = COLLECT_FIELDS[idx - 1]
+        if previous == "readiness":
+            return None
+        return previous
+
+    @staticmethod
+    def _clean_correction_value(value: str) -> str:
+        cleaned = value.strip().strip("'\" ")
+        cleaned = cleaned.strip(".?!,;:")
+        return cleaned
+
+    @staticmethod
+    def _extract_correction_value(user_message: str) -> str | None:
+        text = " ".join(user_message.strip().split())
+        if not text:
+            return None
+
+        patterns = [
+            r"(?:i meant|i mean)\s+(.+?)(?:\s+not\s+.+)?$",
+            r"(?:correction|correct that to)\s+(.+)$",
+            r"(?:no no|no,? sorry|sorry)[:,]?\s*(?:i meant|i mean)?\s*(.+)$",
+        ]
+
+        lowered = text.lower()
+        for pattern in patterns:
+            match = re.search(pattern, lowered)
+            if not match:
+                continue
+            value = text[match.start(1):match.end(1)]
+            normalized = InterviewFlowService._clean_correction_value(value)
+            if normalized:
+                return normalized
+
+        return None
+
+    @staticmethod
+    def detect_correction(
+        current_field: str,
+        payload: dict,
+        user_message: str,
+    ) -> tuple[str, str] | None:
+        lowered = " ".join(user_message.lower().strip().split())
+        if not lowered:
+            return None
+
+        has_signal = any(keyword in lowered for keyword in CORRECTION_KEYWORDS)
+        if not has_signal:
+            return None
+
+        explicit_target_map = {
+            "role": "role",
+            "interview type": "interview_type",
+            "type": "interview_type",
+            "level": "level",
+            "tech stack": "techstack",
+            "techstack": "techstack",
+            "amount": "amount",
+            "number of questions": "amount",
+        }
+
+        target_field = None
+        for phrase, field in explicit_target_map.items():
+            if phrase in lowered and field in payload:
+                target_field = field
+                break
+
+        if not target_field:
+            target_field = InterviewFlowService.get_previous_field(current_field)
+            if not target_field or target_field not in payload:
+                return None
+
+        corrected_value = InterviewFlowService._extract_correction_value(user_message)
+        if not corrected_value:
+            return None
+
+        return target_field, corrected_value
 
     @staticmethod
     def parse_amount(value: str) -> int:
