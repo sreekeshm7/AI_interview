@@ -114,6 +114,14 @@ Example conversational intent response (same expected field retained):
 }
 ```
 
+Correction handling example (updates previous answer, keeps conversation moving):
+
+- AI: `What role would you like to train for?`
+- User: `I would like to train for fastrack`
+- AI: moves to next field
+- User: `No no, I meant fullstack not fastrack`
+- AI: `Understood, fullstack it is.` and continues with the current expected field prompt
+
 Final response (completed):
 
 ```json
