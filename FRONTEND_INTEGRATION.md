@@ -12,7 +12,8 @@ This document explains:
 There are **2 flows**:
 
 1. **Collector flow** (setup interview)
-   - Collects `role`, `interview_type`, `level`, `techstack`, `amount`
+  - Starts with readiness confirmation, then collects `role`, `interview_type`, `level`, `techstack`, `amount`
+  - Handles conversational intents like repeat request, examples request, and clarification
    - Generates questions using OpenAI
    - Saves interview in DB
 
@@ -54,7 +55,8 @@ Request body (optional):
 
 ```json
 {
-  "user_id": "user_123"
+  "user_id": "user_123",
+  "candidate_name": "Alex"
 }
 ```
 
@@ -64,8 +66,10 @@ Response:
 {
   "collector_session_id": 1,
   "user_id": "user_123",
-  "assistant_message": "What role would you like to train for?...",
-  "expected_field": "role"
+  "assistant_message": "Hello Alex, I’ll ask you a few quick questions so I can prepare the perfect interview for your practice. Are you ready to begin?",
+  "assistant_audio_base64": "...",
+  "assistant_audio_content_type": "audio/mp3",
+  "expected_field": "readiness"
 }
 ```
 
@@ -88,8 +92,23 @@ Response (not completed yet):
 {
   "collector_session_id": 1,
   "user_id": "user_123",
-  "assistant_message": "Great choice. Are you aiming for technical, behavioral, or mixed interview?",
-  "expected_field": "interview_type",
+  "assistant_message": "Awesome, let’s get started. Could you tell me what role you want to train for?",
+  "assistant_audio_base64": "...",
+  "assistant_audio_content_type": "audio/mp3",
+  "expected_field": "role",
+  "completed": false,
+  "interview_id": null
+}
+```
+
+Example conversational intent response (same expected field retained):
+
+```json
+{
+  "collector_session_id": 1,
+  "user_id": "user_123",
+  "assistant_message": "Sure thing. Examples include frontend developer, backend developer, full stack developer, mobile developer, designer, or data analyst. Could you tell me what role you want to train for?",
+  "expected_field": "role",
   "completed": false,
   "interview_id": null
 }
@@ -109,6 +128,55 @@ Final response (completed):
 ```
 
 When `completed=true`, redirect user to dashboard and show interview `42`.
+
+### Step C — optional voice-to-voice collector mode
+
+After creating a collector session with `/api/collector/start`, you can run setup via WebSocket:
+
+`WS /api/collector/sessions/{collector_session_id}/voice?user_id=user_123`
+
+Server first sends:
+
+```json
+{
+  "type": "assistant_prompt",
+  "collector_session_id": 1,
+  "status": "collecting",
+  "expected_field": "readiness",
+  "assistant_text": "Hello Alex ... Are you ready to begin?",
+  "assistant_audio_base64": "...",
+  "assistant_audio_content_type": "audio/mp3"
+}
+```
+
+Client turn payloads:
+
+```json
+{"type":"user_audio","audio_base64":"...","filename":"setup.webm"}
+```
+
+or
+
+```json
+{"type":"user_text","text":"can you repeat that question"}
+```
+
+Server turn response:
+
+```json
+{
+  "type": "assistant_turn",
+  "collector_session_id": 1,
+  "status": "collecting",
+  "expected_field": "role",
+  "completed": false,
+  "interview_id": null,
+  "user_text": "yes",
+  "assistant_text": "Great, let’s start. Could you tell me what role you want to train for?",
+  "assistant_audio_base64": "...",
+  "assistant_audio_content_type": "audio/mp3"
+}
+```
 
 ---
 
