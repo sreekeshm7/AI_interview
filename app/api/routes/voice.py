@@ -4,13 +4,166 @@ import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.cache import interview_cache
+from app.api.routes.collector import process_collector_turn
 from app.db.session import SessionLocal
+from app.repositories.collector_repository import CollectorRepository
 from app.repositories.interview_repository import InterviewRepository
 from app.repositories.interview_session_repository import InterviewSessionRepository
 from app.repositories.transcript_repository import TranscriptRepository
+from app.services.interview_flow_service import FIELD_PROMPTS, InterviewFlowService
 from app.services.openai_service import OpenAIService
 
 router = APIRouter(tags=["voice"])
+
+
+@router.websocket("/collector/sessions/{collector_session_id}/voice")
+async def collector_voice_socket(websocket: WebSocket, collector_session_id: int):
+    await websocket.accept()
+    user_id = websocket.query_params.get("user_id")
+
+    db = SessionLocal()
+    openai_service = OpenAIService()
+
+    try:
+        collector_repo = CollectorRepository(db)
+        transcript_repo = TranscriptRepository(db)
+
+        collector_session = collector_repo.get(collector_session_id)
+        if not collector_session:
+            await websocket.send_json({"type": "error", "message": "Collector session not found"})
+            await websocket.close(code=1008)
+            return
+
+        if collector_session.status == "completed":
+            await websocket.send_json({"type": "completed", "message": "Collector session already completed"})
+            await websocket.close(code=1000)
+            return
+
+        effective_user_id = user_id or collector_session.user_id
+        entries = transcript_repo.list("collector", collector_session.id, user_id=effective_user_id)
+
+        if entries:
+            opening_text = entries[-1].message
+        else:
+            payload = collector_repo.parse_payload(collector_session)
+            candidate_name = payload.get("candidate_name")
+            if collector_session.current_field == "readiness":
+                opening_text = InterviewFlowService.build_opening_prompt(candidate_name)
+            else:
+                opening_text = FIELD_PROMPTS.get(collector_session.current_field, "Let's continue.")
+
+            transcript_repo.add(
+                session_type="collector",
+                session_id=collector_session.id,
+                speaker="assistant",
+                message=opening_text,
+                user_id=effective_user_id,
+            )
+
+        opening_audio, opening_content_type = openai_service.synthesize_speech(opening_text)
+        await websocket.send_json(
+            {
+                "type": "assistant_prompt",
+                "user_id": effective_user_id,
+                "collector_session_id": collector_session.id,
+                "status": collector_session.status,
+                "expected_field": collector_session.current_field,
+                "assistant_text": opening_text,
+                "assistant_audio_base64": base64.b64encode(opening_audio).decode("utf-8"),
+                "assistant_audio_content_type": opening_content_type,
+            }
+        )
+
+        while True:
+            incoming = await websocket.receive_text()
+            try:
+                payload = json.loads(incoming)
+            except json.JSONDecodeError:
+                await websocket.send_json({"type": "error", "message": "Invalid JSON payload"})
+                continue
+
+            event_type = payload.get("type")
+            if event_type == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+
+            collector_session = collector_repo.get(collector_session_id)
+            if not collector_session:
+                await websocket.send_json({"type": "error", "message": "Collector session not found"})
+                await websocket.close(code=1008)
+                return
+
+            if collector_session.status == "completed":
+                await websocket.send_json({"type": "completed", "message": "Collector session already completed"})
+                continue
+
+            if event_type == "user_audio":
+                audio_base64 = payload.get("audio_base64")
+                if not audio_base64:
+                    await websocket.send_json({"type": "error", "message": "audio_base64 is required"})
+                    continue
+
+                try:
+                    audio_bytes = base64.b64decode(audio_base64)
+                except Exception:
+                    await websocket.send_json({"type": "error", "message": "Invalid base64 audio"})
+                    continue
+
+                filename = payload.get("filename") or "collector_input.webm"
+                user_text = openai_service.transcribe_audio(filename=filename, file_bytes=audio_bytes)
+            elif event_type == "user_text":
+                user_text = str(payload.get("text") or "").strip()
+                if not user_text:
+                    await websocket.send_json({"type": "error", "message": "text is required for user_text"})
+                    continue
+            else:
+                await websocket.send_json(
+                    {"type": "error", "message": "Unsupported type. Use user_audio, user_text, or ping"}
+                )
+                continue
+
+            turn = process_collector_turn(
+                collector_session_id=collector_session_id,
+                user_message=user_text,
+                user_id=effective_user_id,
+                db=db,
+                openai_service=openai_service,
+            )
+
+            assistant_audio, assistant_content_type = openai_service.synthesize_speech(turn.assistant_message)
+            await websocket.send_json(
+                {
+                    "type": "assistant_turn",
+                    "user_id": turn.user_id,
+                    "collector_session_id": turn.collector_session_id,
+                    "status": "completed" if turn.completed else "collecting",
+                    "expected_field": turn.expected_field,
+                    "completed": turn.completed,
+                    "interview_id": turn.interview_id,
+                    "user_text": user_text,
+                    "assistant_text": turn.assistant_message,
+                    "assistant_audio_base64": base64.b64encode(assistant_audio).decode("utf-8"),
+                    "assistant_audio_content_type": assistant_content_type,
+                }
+            )
+
+            if turn.completed:
+                await websocket.send_json(
+                    {
+                        "type": "completed",
+                        "collector_session_id": turn.collector_session_id,
+                        "interview_id": turn.interview_id,
+                        "message": "Collector completed",
+                    }
+                )
+
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        await websocket.send_json({"type": "error", "message": str(exc)})
+        await websocket.close(code=1011)
+    finally:
+        db.close()
 
 
 @router.websocket("/interviews/sessions/{interview_session_id}/voice")
