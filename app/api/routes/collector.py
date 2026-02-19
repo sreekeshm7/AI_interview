@@ -39,6 +39,72 @@ def process_collector_turn(
 
     transcript_repo.add("collector", session.id, "user", user_message, user_id=effective_user_id)
 
+    correction = InterviewFlowService.detect_correction(current_field, payload, user_message)
+    if correction:
+        target_field, corrected_text = correction
+        try:
+            corrected_value = InterviewFlowService.normalize_field_value(target_field, corrected_text)
+        except ValueError as exc:
+            msg = f"Got it. I couldn’t update {target_field} yet: {exc}"
+            assistant_audio_base64 = None
+            assistant_audio_content_type = None
+            try:
+                assistant_audio, assistant_audio_content_type = openai_service.synthesize_speech(msg)
+                assistant_audio_base64 = base64.b64encode(assistant_audio).decode("utf-8")
+            except Exception:
+                assistant_audio_base64 = None
+                assistant_audio_content_type = None
+            transcript_repo.add("collector", session.id, "assistant", msg, user_id=effective_user_id)
+            return CollectorTurnResponse(
+                collector_session_id=session.id,
+                user_id=effective_user_id,
+                assistant_message=msg,
+                assistant_audio_base64=assistant_audio_base64,
+                assistant_audio_content_type=assistant_audio_content_type,
+                expected_field=current_field,
+                completed=False,
+            )
+
+        payload[target_field] = corrected_value
+        collector_repo.update_payload(
+            session,
+            payload,
+            current_field=current_field,
+            status="collecting",
+            user_id=effective_user_id,
+        )
+
+        if isinstance(corrected_value, list):
+            corrected_display = ", ".join(corrected_value)
+        else:
+            corrected_display = str(corrected_value)
+
+        assistant_message = (
+            f"Understood, {corrected_display} it is. {FIELD_PROMPTS[current_field]}"
+            if current_field in FIELD_PROMPTS
+            else f"Understood, {corrected_display} it is."
+        )
+
+        assistant_audio_base64 = None
+        assistant_audio_content_type = None
+        try:
+            assistant_audio, assistant_audio_content_type = openai_service.synthesize_speech(assistant_message)
+            assistant_audio_base64 = base64.b64encode(assistant_audio).decode("utf-8")
+        except Exception:
+            assistant_audio_base64 = None
+            assistant_audio_content_type = None
+
+        transcript_repo.add("collector", session.id, "assistant", assistant_message, user_id=effective_user_id)
+        return CollectorTurnResponse(
+            collector_session_id=session.id,
+            user_id=effective_user_id,
+            assistant_message=assistant_message,
+            assistant_audio_base64=assistant_audio_base64,
+            assistant_audio_content_type=assistant_audio_content_type,
+            expected_field=current_field,
+            completed=False,
+        )
+
     intent = InterviewFlowService.detect_turn_intent(current_field, user_message)
     if intent in {"repeat", "examples", "clarify", "clarify_readiness", "not_ready"}:
         assistant_message = InterviewFlowService.build_intent_reply(current_field, intent)
