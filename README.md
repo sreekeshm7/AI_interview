@@ -2,7 +2,7 @@
 
 Backend service for two interview flows:
 
-1. **Collector flow**: conversationally gathers interview setup fields (`role`, `type`, `level`, `techstack`, `amount`) and generates interview questions.
+1. **Collector flow**: conversationally gathers interview setup fields (`readiness`, `role`, `type`, `level`, `techstack`, `amount`) with intent handling (repeat/examples/clarify) and generates interview questions.
 2. **Actual interview flow**: asks pre-generated questions in sequence, acknowledges responses naturally, and stores transcripts.
 
 ## Stack
@@ -93,6 +93,7 @@ uvicorn main:app --reload
 
 - `POST /api/collector/start`
 - `POST /api/collector/{collector_session_id}/turn`
+- `WS /api/collector/sessions/{collector_session_id}/voice?user_id=<optional>`
 
 When all fields are collected, an interview is generated and returned as `interview_id`.
 
